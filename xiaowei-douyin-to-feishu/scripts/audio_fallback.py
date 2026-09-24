@@ -10,16 +10,18 @@ import hashlib
 import importlib.util
 import ipaddress
 import json
+import math
 import re
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+import wave
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 MOBILE_UA = (
@@ -107,7 +109,8 @@ def parse_share_page(html):
         addresses = item["video"]["play_addr"]["url_list"]
         address = next(u for u in addresses if isinstance(u, str) and urlsplit(u).scheme in ("http", "https"))
         title = item.get("desc") or ""
-        return {"title": title if isinstance(title, str) else "", "video_url": address}
+        description = title if isinstance(title, str) else ""
+        return {"title": description, "description": description, "video_url": address}
     except (KeyError, TypeError, IndexError, ValueError, StopIteration) as exc:
         raise ValueError("分享页结构不匹配或没有播放地址，请改用已有视频提取工具") from exc
 
@@ -136,6 +139,35 @@ def sha256(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def valid_duration_seconds(value):
+    """Only independently reported, finite, positive media lengths are usable."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        seconds = float(value)
+    except OverflowError:
+        return None
+    return seconds if math.isfinite(seconds) and seconds > 0 else None
+
+
+def extracted_wav_duration_seconds(path):
+    """Measure the extracted media itself, independently of ASR timestamps."""
+    try:
+        with wave.open(str(path), "rb") as stream:
+            if (stream.getframerate() != 16000 or stream.getnchannels() != 1
+                    or stream.getsampwidth() != 2 or stream.getcomptype() != "NONE"):
+                return None
+            return valid_duration_seconds(stream.getnframes() / stream.getframerate())
+    except (OSError, EOFError, wave.Error):
+        return None
+
+
+def safe_input_url(url):
+    """Retain the supplied share-link path, dropping query/fragment tracking data."""
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.hostname or "", parsed.path, "", ""))
 
 
 def extract_audio(video, audio):
@@ -173,6 +205,10 @@ def download_ytdlp(url, run_dir, max_mb, cookies_from_browser=None):
     except (ValueError, TypeError, KeyError) as exc:
         raise RuntimeError("yt-dlp 未返回有效的视频 ID") from exc
     title = info.get("title") if isinstance(info.get("title"), str) else ""
+    # A video's page description is the author's published caption, not the
+    # spoken transcript. Keep the original value separate for downstream use.
+    description = info.get("description") if isinstance(info.get("description"), str) else ""
+    duration_seconds = valid_duration_seconds(info.get("duration"))
     with tempfile.TemporaryDirectory(prefix="video-", dir=run_dir) as temporary:
         video_root = Path(temporary)
         download_result = subprocess.run(
@@ -187,12 +223,25 @@ def download_ytdlp(url, run_dir, max_mb, cookies_from_browser=None):
             raise RuntimeError("下载结果不存在、数量异常或超过大小上限")
         audio_path = run_dir / "audio.wav"
         extract_audio(media[0], audio_path)
-    return {
+    duration_source = "yt-dlp" if duration_seconds is not None else None
+    if duration_seconds is None:
+        duration_seconds = extracted_wav_duration_seconds(audio_path)
+        if duration_seconds is not None:
+            duration_source = "extracted_audio"
+    canonical_url = f"https://www.douyin.com/video/{video_id}"
+    result = {
         "stage": "audio_ready", "video_id": video_id, "title": title,
-        "source_url": f"https://www.douyin.com/video/{video_id}",
+        "source_url": canonical_url, "source_url_canonical": canonical_url,
+        "source_url_input": safe_input_url(url),
         "audio_path": str(audio_path.resolve()), "audio_sha256": sha256(audio_path),
         "method": "yt-dlp+ffmpeg", "transcript_status": "not_started",
     }
+    if description.strip():
+        result["description"] = description
+    if duration_seconds is not None:
+        result["duration_seconds"] = duration_seconds
+        result["duration_source"] = duration_source
+    return result
 
 
 def download_mobile_share(url, run_dir, max_mb):
@@ -210,12 +259,17 @@ def download_mobile_share(url, run_dir, max_mb):
         with open_public(info["video_url"], referer=True) as response:
             copy_limited(response, video_path, int(max_mb * 1024 * 1024))
         extract_audio(video_path, audio_path)
-    return {
+    canonical_url = f"https://www.douyin.com/video/{video_id}"
+    result = {
         "stage": "audio_ready", "video_id": video_id, "title": info["title"],
-        "source_url": f"https://www.douyin.com/video/{video_id}",
+        "source_url": canonical_url, "source_url_canonical": canonical_url,
+        "source_url_input": safe_input_url(url),
         "audio_path": str(audio_path.resolve()), "audio_sha256": sha256(audio_path),
         "method": "legacy_mobile_share_page+ffmpeg", "transcript_status": "not_started",
     }
+    if info["description"].strip():
+        result["description"] = info["description"]
+    return result
 
 
 def download(source, run_dir, max_mb, cookies_from_browser=None):

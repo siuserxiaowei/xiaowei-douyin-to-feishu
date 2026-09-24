@@ -63,6 +63,8 @@ def save_run(path, run):
 def read_source(path, run):
     if run.get("transcript_status") != "complete":
         raise PublishError("只发布全文已取回的运行记录")
+    if run.get("description") is not None and not isinstance(run["description"], str):
+        raise PublishError("run.json 的 description 必须是抖音页面发布文案字符串")
     value = run.get("transcript_file")
     if not isinstance(value, str) or not value:
         raise PublishError("run.json 缺少 transcript_file")
@@ -98,6 +100,8 @@ def make_document(path, run, transcript_path):
             "transcript_file": str(transcript_path),
         }],
     }
+    if run.get("description") is not None:
+        batch["videos"][0]["description"] = run["description"]
     body, manifest = load_renderer().render(batch, path.parent)
     document_path = path.with_name("document.md")
     if document_path.exists():
@@ -155,6 +159,7 @@ def create(path, run, document_path, title, parent_token=None):
 
 ESCAPE_PATTERN = re.compile(r"\\([\\`*_\[\]$~<>#+\-=.!|()&])")
 TRANSCRIPT_HEADING = re.compile(r"(?m)^### 逐字稿[ \t]*\r?\n(?:[ \t]*\r?\n)")
+DESCRIPTION_HEADING = re.compile(r"(?m)^### 发布文案（抖音页面）[ \t]*\r?\n(?:[ \t]*\r?\n)")
 
 
 def readback_transcript(content):
@@ -164,6 +169,15 @@ def readback_transcript(content):
     if len(headings) != 1:
         raise PublishError("飞书回读中无法唯一定位逐字稿章节")
     return content[headings[0].end():].replace("\r\n", "\n").rstrip("\n")
+
+
+def readback_description(content):
+    """Read the independent page-caption section before the spoken transcript."""
+    headings = list(DESCRIPTION_HEADING.finditer(content))
+    transcript = TRANSCRIPT_HEADING.search(content)
+    if len(headings) != 1 or transcript is None or headings[0].end() >= transcript.start():
+        raise PublishError("飞书回读中无法唯一定位发布文案章节")
+    return content[headings[0].end():transcript.start()].replace("\r\n", "\n").rstrip("\n")
 
 
 def verify_readback_identity(content, run):
@@ -199,14 +213,25 @@ def verify(path, run, transcript):
         save_run(path, run)
         raise PublishError(f"文档已定位，但全文回读待完成：{exc}") from exc
     matches = same_text(readback, transcript)
+    description = run.get("description")
+    if isinstance(description, str) and description.strip():
+        try:
+            description_matches = same_text(readback_description(content), description)
+        except PublishError:
+            description_matches = False
+        run["feishu_readback_matches_description"] = description_matches
+    else:
+        description_matches = True
     run["feishu_readback_characters"] = len(readback)
     run["feishu_readback_matches_transcript"] = matches
-    run["feishu_write_status"] = "verified_full_text" if matches else "verification_failed"
-    if matches:
+    run["feishu_write_status"] = "verified_full_text" if matches and description_matches else "verification_failed"
+    if matches and description_matches:
         run["feishu_verified_at"] = now_utc()
     save_run(path, run)
     if not matches:
         raise PublishError("飞书回读逐字稿与本地原稿不一致；保留原文档供修补")
+    if not description_matches:
+        raise PublishError("飞书回读发布文案与本地页面文案不一致；保留原文档供修补")
     return {"ok": True, "feishu_doc": doc, "feishu_write_status": run["feishu_write_status"],
             "video_id": str(run["video_id"]), "transcript_characters": len(transcript)}
 

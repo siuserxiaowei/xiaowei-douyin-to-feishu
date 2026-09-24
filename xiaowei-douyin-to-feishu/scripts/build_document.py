@@ -65,6 +65,10 @@ def render(batch, base):
         summary = item.get("summary", [])
         if not isinstance(summary, list) or len(summary) > 3 or any(not isinstance(v, str) or not v.strip() for v in summary):
             raise ValueError("summary 应为 0 到 3 个非空字符串")
+        description = item.get("description")
+        if description is not None and not isinstance(description, str):
+            raise ValueError("description 应为抖音页面发布文案字符串")
+        description = description if description and description.strip() else ""
         transcript = ""
         transcript_path = None
         if status in ("complete", "partial"):
@@ -84,6 +88,8 @@ def render(batch, base):
                  f"全文状态：{STATUS[status]}", f"获取方式：{escape_text(method)}", ""]
         if note:
             lines.extend(["说明：" + escape_text(note), ""])
+        if description:
+            lines.extend(["### 发布文案（抖音页面）", "", escape_text(description), ""])
         if summary:
             lines.extend(["### 内容速览（AI 提炼）", ""])
             lines.extend("- " + escape_text(value) for value in summary)
@@ -92,10 +98,14 @@ def render(batch, base):
             label = "已取得的逐字稿（不完整）" if status == "partial" else "逐字稿"
             lines.extend([f"### {label}", "", escape_text(transcript), ""])
         sections.append("\n".join(lines))
-        records.append({"video_id": video_id, "status": status,
+        record = {"video_id": video_id, "status": status,
                         "source_url": source, "transcript_file": str(transcript_path) if transcript_path else None,
                         "characters": len(transcript),
-                        "sha256": hashlib.sha256(transcript.encode("utf-8")).hexdigest() if transcript else None})
+                        "sha256": hashlib.sha256(transcript.encode("utf-8")).hexdigest() if transcript else None}
+        if description:
+            record["description_characters"] = len(description)
+            record["description_sha256"] = hashlib.sha256(description.encode("utf-8")).hexdigest()
+        records.append(record)
     counts = {key: sum(item["status"] == key for item in records) for key in STATUS}
     overview = (f"本批共 {len(videos)} 条视频：全文已取回 {counts['complete']} 条，"
                 f"部分内容 {counts['partial']} 条，未取得逐字稿 {counts['failed']} 条，"

@@ -98,6 +98,41 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(self.saved()["feishu_write_status"], "verified_full_text")
         self.assertFalse((self.base / "document.md").exists())
 
+    def test_description_is_published_and_checked_without_changing_transcript_readback(self):
+        description = "发布文案：先收藏\n#AI赚钱 *与口播不同*"
+        self.run["description"] = description
+        self.write_run()
+
+        def fake_run(arguments, **kwargs):
+            if "+create" in arguments:
+                body = self.fetched_content()
+                self.assertIn("### 发布文案（抖音页面）\n\n", body)
+                self.assertEqual(publisher.readback_transcript(body).rstrip("\n"),
+                                 body.split("### 逐字稿\n\n", 1)[1].rstrip("\n"))
+                return cli_response(arguments, {"ok": True, "data": {"document": {
+                    "url": "https://example.feishu.cn/docx/caption"}}})
+            return cli_response(arguments, {"ok": True, "data": {"document": {
+                "content": self.fetched_content()}}})
+
+        with patch.object(publisher.subprocess, "run", side_effect=fake_run):
+            result = publisher.publish(self.path)
+        self.assertTrue(result["ok"])
+        self.assertTrue(self.saved()["feishu_readback_matches_description"])
+        self.assertTrue(self.saved()["feishu_readback_matches_transcript"])
+        self.assertEqual(self.saved()["feishu_write_status"], "verified_full_text")
+
+    def test_missing_page_description_fails_verification_but_keeps_transcript_check(self):
+        self.run.update(description="原始发布文案", feishu_doc="https://example.feishu.cn/docx/old")
+        self.write_run()
+        with patch.object(publisher.subprocess, "run", side_effect=lambda args, **kw: cli_response(
+                args, {"ok": True, "data": {"document": {"content": self.existing_content()}}})):
+            with self.assertRaisesRegex(publisher.PublishError, "发布文案"):
+                publisher.publish(self.path)
+        saved = self.saved()
+        self.assertTrue(saved["feishu_readback_matches_transcript"])
+        self.assertFalse(saved["feishu_readback_matches_description"])
+        self.assertEqual(saved["feishu_write_status"], "verification_failed")
+
     def test_uncertain_create_never_retries_without_reconciliation(self):
         with patch.object(publisher.subprocess, "run", side_effect=OSError("connection lost")) as command:
             with self.assertRaisesRegex(publisher.PublishError, "创建结果不确定"):

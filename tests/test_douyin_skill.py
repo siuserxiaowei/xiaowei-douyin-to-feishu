@@ -62,6 +62,7 @@ class AudioTests(unittest.TestCase):
         html = "<script>window._ROUTER_DATA = " + json.dumps(payload) + ";window.other=1;</script>"
         parsed = audio.parse_share_page(html)
         self.assertEqual(parsed["title"], "重复也保留")
+        self.assertEqual(parsed["description"], "重复也保留")
         self.assertEqual(parsed["video_url"], "https://cdn.example/playwm/?token=abc")
 
     def test_invalid_share_data_reports_failure(self):
@@ -104,7 +105,11 @@ class AudioTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             def fake_run(command, **kwargs):
                 if "--dump-single-json" in command:
-                    return subprocess.CompletedProcess(command, 0, '{"id":"1234567890123456789","title":"视频标题"}', "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({
+                        "id": "1234567890123456789", "title": "视频标题",
+                        "description": "作者发布文案\n#话题 与口播不同",
+                        "duration": 224.5,
+                    }), "")
                 template = command[command.index("-o") + 1]
                 Path(template.replace("%(ext)s", "m4a")).write_bytes(b"downloaded media")
                 return subprocess.CompletedProcess(command, 0, "", "")
@@ -120,9 +125,46 @@ class AudioTests(unittest.TestCase):
             self.assertEqual(result["video_id"], "1234567890123456789")
             self.assertEqual(result["method"], "yt-dlp+ffmpeg")
             self.assertEqual(result["title"], "视频标题")
+            self.assertEqual(result["description"], "作者发布文案\n#话题 与口播不同")
+            self.assertEqual(result["source_url_canonical"], result["source_url"])
+            self.assertEqual(result["source_url_input"], "https://v.douyin.com/example/")
+            self.assertEqual(result["duration_seconds"], 224.5)
+            self.assertEqual(result["duration_source"], "yt-dlp")
             self.assertEqual(process.call_count, 2)
             for call in process.call_args_list:
                 self.assertIn("--cookies-from-browser", call.args[0])
+
+    def test_duration_requires_independent_positive_finite_number(self):
+        self.assertEqual(audio.valid_duration_seconds(224), 224.0)
+        for value in (None, 0, -2, float("nan"), float("inf"), True, "224", 10 ** 1000):
+            self.assertIsNone(audio.valid_duration_seconds(value))
+
+    def test_missing_metadata_duration_uses_extracted_wav(self):
+        with tempfile.TemporaryDirectory() as temp:
+            def fake_run(command, **kwargs):
+                if "--dump-single-json" in command:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({
+                        "id": "123456", "title": "无元数据时长", "duration": None,
+                    }), "")
+                template = command[command.index("-o") + 1]
+                Path(template.replace("%(ext)s", "m4a")).write_bytes(b"downloaded media")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            def fake_extract(_media, destination):
+                with wave.open(str(destination), "wb") as stream:
+                    stream.setnchannels(1)
+                    stream.setsampwidth(2)
+                    stream.setframerate(16000)
+                    stream.writeframes(b"\0" * (16000 * 2 * 4))
+
+            with patch.object(audio.shutil, "which", side_effect=lambda name: name), \
+                    patch.object(audio.subprocess, "run", side_effect=fake_run), \
+                    patch.object(audio, "extract_audio", side_effect=fake_extract):
+                result = audio.download("https://v.douyin.com/example/?cookie=secret", Path(temp), 256)
+            self.assertEqual(result["duration_seconds"], 4.0)
+            self.assertEqual(result["duration_source"], "extracted_audio")
+            self.assertEqual(result["source_url_input"], "https://v.douyin.com/example/")
+            self.assertNotIn("cookie", json.dumps(result))
 
     @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg unavailable")
     def test_real_ffmpeg_converts_synthetic_audio(self):
@@ -168,6 +210,26 @@ class DocumentTests(unittest.TestCase):
         (self.base / "transcript.txt").write_text("今天先到这里", encoding="utf-8")
         body, _ = document.render(self.batch, self.base)
         self.assertIn("今天先到这里", body)
+
+    def test_page_description_is_separate_from_spoken_transcript(self):
+        description = "页面文案：先收藏！\n### 不应成为标题 *强调*"
+        self.batch["videos"][0]["description"] = description
+        body, manifest = document.render(self.batch, self.base)
+        self.assertIn("### 发布文案（抖音页面）\n\n", body)
+        caption = body.split("### 发布文案（抖音页面）\n\n", 1)[1].split("### 逐字稿\n\n", 1)[0].strip()
+        spoken = body.split("### 逐字稿\n\n", 1)[1].strip()
+        unescape = lambda value: re.sub(r"\\([\\`*_\[\]$~<>#+\-=.!|()&])", r"\1", value)
+        self.assertEqual(unescape(caption), description)
+        self.assertEqual(unescape(spoken), self.text)
+        record = manifest["videos"][0]
+        self.assertEqual(record["description_characters"], len(description))
+        self.assertEqual(record["description_sha256"], hashlib.sha256(description.encode()).hexdigest())
+        self.assertEqual(record["sha256"], hashlib.sha256(self.text.encode()).hexdigest())
+
+    def test_description_must_be_text(self):
+        self.batch["videos"][0]["description"] = ["作者文案"]
+        with self.assertRaisesRegex(ValueError, "description"):
+            document.render(self.batch, self.base)
 
     def test_reject_empty_success(self):
         (self.base / "transcript.txt").write_text(" \n", encoding="utf-8")

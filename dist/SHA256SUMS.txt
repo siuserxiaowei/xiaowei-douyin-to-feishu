@@ -1,2 +1,3 @@
 9ec408beb4f9be3b3f7a715ed020cd26d7c857f973d5e41b8fb1a48617102feb  xiaowei-douyin-to-feishu-v1.0.0.zip
 1de45788f42abdeed47a0fe61022722465401da2b09ec730c777b8ac2a80ff99  xiaowei-douyin-to-feishu-v1.0.1.zip
+8148ae09d09207e0055ba19726ca5cbe6ff2c73f87e442656a0c1d955165f347  xiaowei-douyin-to-feishu-v1.1.0.zip
