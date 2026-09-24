@@ -4,9 +4,9 @@
 
 这是一个面向 **豆包工作** 的 Agent Skill。你提供抖音分享链接、视频链接或博主主页，它指导豆包工作获取完整逐字稿，保留来源，整理成文档并写入飞书，最后读回检查。
 
-**运行环境：豆包工作 · 默认输出：飞书云文档 · 当前版本：v1.0.0**
+**运行环境：豆包工作 · 默认输出：飞书云文档 · 当前版本：v1.0.1**
 
-[下载技能包](https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu/releases/download/v1.0.0/xiaowei-douyin-to-feishu-v1.0.0.zip) · [查看 Skill](xiaowei-douyin-to-feishu/SKILL.md) · [详细使用说明](docs/usage.md) · [验证记录](docs/verification.md)
+[下载技能包](https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu/releases/download/v1.0.1/xiaowei-douyin-to-feishu-v1.0.1.zip) · [查看 Skill](xiaowei-douyin-to-feishu/SKILL.md) · [详细使用说明](docs/usage.md) · [验证记录](docs/verification.md)
 
 ## 能做什么
 
@@ -46,7 +46,7 @@ https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu
 找到 xiaowei-douyin-to-feishu/SKILL.md，阅读并按当前豆包工作支持的方式安装。
 请保留 references、scripts、licenses 和 THIRD_PARTY_NOTICES.md，确保相对路径有效。
 
-安装时先检查内置取稿、浏览器和飞书文档能力是否可用。
+安装时先检查内置取稿、浏览器、yt-dlp、mediakit 转写和飞书文档能力是否可用。
 安装过程不下载视频、不新建飞书文档，也不自动安装本地语音模型。
 完成后告诉我实际安装位置、可用能力和缺少的条件。
 ```
@@ -55,7 +55,7 @@ https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu
 
 ### 方式二：上传 ZIP 技能包
 
-1. 在 [v1.0.0 发布页](https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu/releases/tag/v1.0.0) 下载 `xiaowei-douyin-to-feishu-v1.0.0.zip`。也可以从 [仓库 dist 目录](dist/) 下载同一份包。
+1. 在 [v1.0.1 发布页](https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu/releases/tag/v1.0.1) 下载 `xiaowei-douyin-to-feishu-v1.0.1.zip`。也可以从 [仓库 dist 目录](dist/) 下载同一份包。
 2. 将 ZIP 交给豆包工作，或通过当前版本提供的技能导入入口导入。
 3. 告诉它：
 
@@ -111,29 +111,29 @@ https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu
 ```mermaid
 flowchart TD
     A[抖音链接或博主主页] --> B[整理视频 ID 与来源]
-    B --> C[豆包工作内置逐字稿能力]
+    B --> C{当前环境有可用的内置抖音逐字稿工具?}
     C -->|取得全文| G[全文检查与文档整理]
-    C -->|失败或缺段| D[已有音视频转写或飞书妙记]
-    D -->|取得全文| G
-    D -->|不可用| E[可选：分享页提取音频]
-    E --> F[已有转写服务或本地 SenseVoice]
+    C -->|没有或不可用| D[浏览器会话 + yt-dlp 获取音频]
+    D --> E[mediakit Cloud ASR 取得全部字幕]
+    E -->|取得全文| G
+    E -->|不可用| F[其他已有转写服务或可选本地 SenseVoice]
     F --> G
     G --> H[新建或追加飞书文档]
     H --> I[读回全文并交付链接]
 ```
 
-优先使用豆包工作已具备的能力。备用脚本参考了移动分享页提取播放地址的方法，再用 FFmpeg 提取音轨；本地 SenseVoice 只在所需依赖和模型条件具备时使用。
+在当前豆包工作环境里，浏览器会话 + `yt-dlp` + `mediakit-cli video asr-subtitles` 已实际取得抖音逐字稿。内置工具只有经当前会话确认可用才使用；`doubao-video-extract` 在这次环境中拒绝 `douyin.com`。备用脚本现在优先使用 `yt-dlp`，旧移动分享页解析仅在缺少它时尝试；本地 SenseVoice 只在依赖和模型已具备时使用。
 
-`web.fetch` 的逐字稿能力属于目标运行环境。普通网页抓取工具即使名称相同，也不一定能返回抖音口播。平台页面、登录状态和风控变化同样可能影响采集。
+**完成条件是飞书文档已经创建或更新，且新增逐字稿全文读回与本地原稿一致。** 已有 `run.json` 和 `transcript.txt` 时，运行 `scripts/publish_feishu.py <run.json>` 可以直接续跑飞书阶段；仅保存本地文件不算完成。平台页面、登录状态和风控变化可能影响采集。
 
 ## 运行条件
 
 | 路径 | 需要什么 |
 |---|---|
-| 默认工作流 | 豆包工作中可用的取稿能力，以及当前用户的飞书文档写入权限 |
+| 默认工作流 | 当前环境可用的抖音媒体获取与转写能力，以及当前用户的飞书文档写入权限 |
 | 博主主页读取 | 可用浏览器；页面要求登录时由用户完成登录 |
 | 飞书妙记回退 | 当前环境已经连接、获授权且可用的妙记转写链路 |
-| 本包音频提取脚本 | Python 3.10+、FFmpeg、可访问的抖音分享页 |
+| 本包音频提取脚本 | Python 3.10+、FFmpeg、`yt-dlp`；若需登录视频，需可访问的浏览器会话 |
 | 可选本地转写 | FunASR、ModelScope、PyTorch、torchaudio 及 SenseVoice 模型 |
 | CLI 写飞书 | 已安装并完成相应授权的 `lark-cli`；已有连接器可用时优先用连接器 |
 
@@ -141,9 +141,7 @@ flowchart TD
 
 ## 验证情况
 
-当前版本已完成 **21 项本地测试**、Skill 格式检查、实际 FFmpeg 合成音频提取、Markdown 原文保留检查，以及飞书创建命令的 dry-run。
-
-**尚未完成豆包工作内的真实端到端验收。** 在线抖音下载、豆包取稿、真实语音识别质量及飞书远端写入仍需用真实链接和目标账号验证。dry-run 通过不代表已获得远端写入权限。
+2026-09-24 已在豆包工作真实处理一条 3 分 44 秒的抖音视频：通过浏览器会话、`yt-dlp` 和 mediakit Cloud ASR 取得 142 段、1241 字的逐字稿，再写入飞书并读回全文核对。语音识别结果未经过人工逐字校对。v1.0.1 另增加发布续跑脚本及离线回归测试；具体验证边界见 [验证记录](docs/verification.md)。
 
 在仓库根目录运行离线测试：
 
@@ -167,7 +165,7 @@ tests/                       # 离线测试
 dist/                        # 可导入 ZIP 与校验和
 ```
 
-脚本负责音频提取、可选转写和正文格式化；完整的取稿、飞书保存与恢复流程由豆包工作按照 Skill 指令执行。
+脚本负责音频提取、可选转写、正文格式化和飞书发布续跑；豆包工作按 Skill 指令完成取稿与交付。
 
 ## 参考与署名
 

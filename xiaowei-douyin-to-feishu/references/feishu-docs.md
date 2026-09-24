@@ -2,6 +2,18 @@
 
 优先使用豆包工作当前提供的飞书文档连接器，依据实际工具 schema 创建、读取和追加。这里的 CLI 是备用实现，不能假定所有豆包工作环境已经安装或登录。
 
+## 已有逐字稿直接续跑
+
+本技能默认交付飞书文档。只得到本地 `transcript.txt` 时，先查看同目录 `run.json`，确认其中有 `video_id`、`source_url_canonical`、`transcript_file`、`transcript_status: complete`、字符数及 SHA-256。若当前环境已有获授权的 `lark-cli`，在技能根目录运行：
+
+```bash
+python3 scripts/publish_feishu.py '/实际路径/run.json'
+```
+
+脚本把单条视频运行记录映射为保真正文，创建飞书文档，再回读逐字稿全文核对。已有 `feishu_doc` 时只回读，不重新创建。创建前会在 `run.json` 记录尝试；响应不确定时不能盲目重试，先到飞书确认已有文档，再运行 `python3 scripts/publish_feishu.py '/实际路径/run.json' --existing-doc '实际文档URL'`。指定已有文档时该脚本只核对正文，**不会追加**；需要追加时按下文的先读、去重、追加流程执行。
+
+只有脚本输出 `feishu_write_status: verified_full_text` 并返回真实文档 URL，才可报告已完成。脚本失败时保留运行记录及原稿，按错误继续处理认证、权限或缺字问题；不能把本地文件改称为飞书交付。
+
 ## 目标与身份
 
 - `docx` / 文档类型 `wiki`：读取并确认真实对象。已有目标默认追加；同视频 ID 已存在且正文完整时复用。补缺段或刷新已有稿件需要用户对应意图，不覆盖无关内容。

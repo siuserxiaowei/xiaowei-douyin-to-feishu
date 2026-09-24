@@ -100,6 +100,30 @@ class AudioTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual(json.loads((Path(result["run_dir"]) / "result.json").read_text()), result)
 
+    def test_download_prefers_ytdlp_with_browser_session(self):
+        with tempfile.TemporaryDirectory() as temp:
+            def fake_run(command, **kwargs):
+                if "--dump-single-json" in command:
+                    return subprocess.CompletedProcess(command, 0, '{"id":"1234567890123456789","title":"视频标题"}', "")
+                template = command[command.index("-o") + 1]
+                Path(template.replace("%(ext)s", "m4a")).write_bytes(b"downloaded media")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            def fake_extract(media, destination):
+                self.assertEqual(media.suffix, ".m4a")
+                destination.write_bytes(b"wave audio")
+
+            with patch.object(audio.shutil, "which", side_effect=lambda name: name), \
+                    patch.object(audio.subprocess, "run", side_effect=fake_run) as process, \
+                    patch.object(audio, "extract_audio", side_effect=fake_extract):
+                result = audio.download("https://v.douyin.com/example/", Path(temp), 256, "chrome")
+            self.assertEqual(result["video_id"], "1234567890123456789")
+            self.assertEqual(result["method"], "yt-dlp+ffmpeg")
+            self.assertEqual(result["title"], "视频标题")
+            self.assertEqual(process.call_count, 2)
+            for call in process.call_args_list:
+                self.assertIn("--cookies-from-browser", call.args[0])
+
     @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg unavailable")
     def test_real_ffmpeg_converts_synthetic_audio(self):
         with tempfile.TemporaryDirectory() as temp:

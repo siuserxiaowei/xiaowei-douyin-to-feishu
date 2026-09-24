@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Optional Douyin audio extraction / local ASR. No installs or cloud uploads.
 
-Share-page parsing and SenseVoice configuration adapted from chubbyguan/chubbyskills.
+The old share-page parser and SenseVoice configuration adapted from chubbyguan/chubbyskills.
 Copyright (c) 2026 Chubby; MIT notice: ../licenses/chubbyskills-MIT.txt.
 """
 
@@ -151,10 +151,52 @@ def extract_audio(video, audio):
         raise RuntimeError("未提取到有效音轨")
 
 
-def download(source, run_dir, max_mb):
-    if not shutil.which("ffmpeg"):
-        raise RuntimeError("缺少 FFmpeg，未开始下载")
-    url = source_url(source)
+def download_ytdlp(url, run_dir, max_mb, cookies_from_browser=None):
+    """Prefer yt-dlp's maintained extractor over Douyin's changing share HTML."""
+    binary = shutil.which("yt-dlp")
+    if not binary:
+        raise RuntimeError("缺少 yt-dlp")
+    common = [binary, "--no-playlist", "--no-warnings", "--no-progress"]
+    if cookies_from_browser:
+        common.extend(["--cookies-from-browser", cookies_from_browser])
+    metadata = subprocess.run(
+        common + ["--dump-single-json", "--skip-download", url],
+        capture_output=True, text=True, timeout=90,
+    )
+    if metadata.returncode:
+        raise RuntimeError("yt-dlp 未能解析此抖音链接；检查链接、登录态或浏览器会话")
+    try:
+        info = json.loads(metadata.stdout)
+        video_id = str(info["id"])
+        if not video_id.isdigit():
+            raise ValueError("invalid video ID")
+    except (ValueError, TypeError, KeyError) as exc:
+        raise RuntimeError("yt-dlp 未返回有效的视频 ID") from exc
+    title = info.get("title") if isinstance(info.get("title"), str) else ""
+    with tempfile.TemporaryDirectory(prefix="video-", dir=run_dir) as temporary:
+        video_root = Path(temporary)
+        download_result = subprocess.run(
+            common + ["--max-filesize", str(int(max_mb * 1024 * 1024)),
+                      "-f", "bestaudio/best", "-o", str(video_root / "media.%(ext)s"), url],
+            capture_output=True, text=True, timeout=300,
+        )
+        if download_result.returncode:
+            raise RuntimeError("yt-dlp 未取得媒体；检查浏览器登录态或视频访问限制")
+        media = [p for p in video_root.glob("media.*") if p.is_file() and p.suffix not in (".part", ".ytdl")]
+        if len(media) != 1 or media[0].stat().st_size > int(max_mb * 1024 * 1024):
+            raise RuntimeError("下载结果不存在、数量异常或超过大小上限")
+        audio_path = run_dir / "audio.wav"
+        extract_audio(media[0], audio_path)
+    return {
+        "stage": "audio_ready", "video_id": video_id, "title": title,
+        "source_url": f"https://www.douyin.com/video/{video_id}",
+        "audio_path": str(audio_path.resolve()), "audio_sha256": sha256(audio_path),
+        "method": "yt-dlp+ffmpeg", "transcript_status": "not_started",
+    }
+
+
+def download_mobile_share(url, run_dir, max_mb):
+    """Legacy fallback: this page layout was observed broken on 2026-09-24."""
     video_id = resolve_video_id(url)
     share = f"https://www.iesdouyin.com/share/video/{video_id}"
     with open_public(share) as response:
@@ -172,8 +214,19 @@ def download(source, run_dir, max_mb):
         "stage": "audio_ready", "video_id": video_id, "title": info["title"],
         "source_url": f"https://www.douyin.com/video/{video_id}",
         "audio_path": str(audio_path.resolve()), "audio_sha256": sha256(audio_path),
-        "method": "mobile_share_page+ffmpeg", "transcript_status": "not_started",
+        "method": "legacy_mobile_share_page+ffmpeg", "transcript_status": "not_started",
     }
+
+
+def download(source, run_dir, max_mb, cookies_from_browser=None):
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("缺少 FFmpeg，未开始下载")
+    url = source_url(source)
+    if shutil.which("yt-dlp"):
+        return download_ytdlp(url, run_dir, max_mb, cookies_from_browser)
+    if cookies_from_browser:
+        raise RuntimeError("指定了浏览器登录态，但未安装 yt-dlp")
+    return download_mobile_share(url, run_dir, max_mb)
 
 
 def transcribe(audio_path, run_dir):
@@ -208,6 +261,7 @@ def main(argv=None):
     fetch.add_argument("source")
     fetch.add_argument("--output-dir", type=Path, required=True)
     fetch.add_argument("--max-mb", type=float, default=256)
+    fetch.add_argument("--cookies-from-browser", help="仅在当前浏览器会话可访问时传给 yt-dlp，例如 chrome")
     asr = commands.add_parser("transcribe", help="已有依赖时使用本地 SenseVoice 转写")
     asr.add_argument("audio", type=Path)
     asr.add_argument("--output-dir", type=Path, required=True)
@@ -220,7 +274,7 @@ def main(argv=None):
         args.output_dir.mkdir(parents=True, exist_ok=True)
         run_dir = Path(tempfile.mkdtemp(prefix=args.command + "-", dir=args.output_dir)).resolve()
         result["run_dir"] = str(run_dir)
-        data = download(args.source, run_dir, args.max_mb) if args.command == "download" else transcribe(args.audio, run_dir)
+        data = download(args.source, run_dir, args.max_mb, args.cookies_from_browser) if args.command == "download" else transcribe(args.audio, run_dir)
         result.update(data, ok=True)
     except Exception as exc:
         # Do not expose signed CDN URLs from HTTP exceptions in durable records.
