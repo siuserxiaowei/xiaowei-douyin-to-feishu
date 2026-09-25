@@ -7,6 +7,8 @@
 
 用户只说“提取抖音文案”时同时查这两项，并在结果中分别标明。不要把两项简单拼成一段“完整文案”。
 
+取得口播后必须按 [`terminology-review.md`](terminology-review.md) 做专业术语专项复核，尤其检查人名、产品/模型名、行业概念、缩写、数字与单位。术语复核只做有证据的局部纠错；ASR 原稿必须保留，疑似项不能凭常识擅自改写。复核状态、证据和最终稿哈希需同步到运行记录。
+
 ## 快速路径：豆包工作内置 web.fetch
 
 [social-media-data-tools 的抖音采集说明](https://github.com/jinchenma94/social-media-data-tools/blob/main/skills/douyin-transcript-exporter/references/douyin.md) 使用的是豆包工作内部能力；其仓库没有提供 web.fetch 解析代码。先查看本会话真实暴露的工具及 schema。不存在、只返回普通 HTML 或结果不含口播时，直接转音频路径。
@@ -31,6 +33,8 @@
 4. 对已取得的 `asr_result.json`，把下载脚本同次产生的 `result.json` 作为元数据传入组装脚本，例如 `python3 scripts/assemble_asr.py 'asr_result.json' --metadata '下载目录/result.json' --output-dir '新的组装目录'`。脚本按字幕时间顺序生成 `transcript.txt` 和可续跑的 `run.json`，保留 `description`，检查首尾覆盖和可疑间隔。`duration_seconds` 必须来自 yt-dlp、提取的音频或其他独立媒体元数据；ASR JSON 自身的 `duration` 可能与字幕末端不同，不能拿它冒充视频时长。时间轴较长空白不必然是漏字，按音频核实前标为部分/待核实。ASR 的同音字、数字和断句可能有误，输出标为“未逐字校对”。
 
 已拿到音频或任务 ID 时先续跑对应阶段，不重复提交同一段云端识别。页面 `description` 缺失或明显截断时可对照浏览器可见原文，仍无法取得就标注缺失，不能从口播反推作者发布文案。若当前没有任何 ASR 能力，可保留音频和元数据，但不能声称取得口播全文。当前环境没有 mediakit 时，也可以使用已授权且实际可用的飞书妙记或其他转写工具；先验证它支持抖音来源或本地媒体。
+
+ASR 分段中的时间戳应保留到复核环节，用来定位专业名词和回听片段。组装只证明字幕顺序与时间覆盖，不能证明术语写对；术语复核也不能替代全文完整性检查。
 
 `scripts/audio_fallback.py` 的旧移动分享页解析只在没有 yt-dlp 时尝试，2026-09-24 已观察到 _ROUTER_DATA 不兼容。`scripts/audio_fallback.py transcribe` 调用本地 SenseVoice，需要 FunASR、ModelScope、PyTorch、torchaudio 和模型；默认不安装这些大型依赖。
 

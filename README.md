@@ -4,9 +4,9 @@
 
 这是一个面向 **豆包工作** 的 Agent Skill。你可以先用一条链接只测试提取，直接查看完整文字；明确要求存飞书时，再创建或更新文档并读回检查。
 
-**运行环境：豆包工作 · 支持只测试取稿或保存飞书 · 当前版本：v1.1.0**
+**运行环境：豆包工作 · 支持只测试取稿或保存飞书 · 当前版本：v1.2.0**
 
-[下载技能包](https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu/releases/download/v1.1.0/xiaowei-douyin-to-feishu-v1.1.0.zip) · [查看 Skill](xiaowei-douyin-to-feishu/SKILL.md) · [详细使用说明](docs/usage.md) · [验证记录](docs/verification.md)
+[下载技能包](https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu/releases/download/v1.2.0/xiaowei-douyin-to-feishu-v1.2.0.zip) · [查看 Skill](xiaowei-douyin-to-feishu/SKILL.md) · [详细使用说明](docs/usage.md) · [验证记录](docs/verification.md)
 
 ## 能做什么
 
@@ -32,9 +32,10 @@
 - **发布文案**：抖音页面的标题、简介或配文（若取得），与口播分开。
 - **内容速览**：默认 1–3 条，标记“AI 提炼”，可关闭。
 - **逐字稿**：保留口语、重复、否定、数字和原有表达，按段落阅读。
+- **术语复核**：专项检查专业概念、品牌/产品/模型名、人名机构名、缩写及数字单位；只根据音频或可靠资料改正有证据的错词，并保留 ASR 原稿与变更依据。
 - **必要说明**：有缺段或转写疑点时，放在正文前面说明。
 
-逐字稿保留作者自己的表达。我们简洁、直接的文风用于说明与内容速览，不用于重写原话。全文取回也不等于逐字校对准确。
+逐字稿保留作者自己的表达。我们简洁、直接的文风用于说明与内容速览，不用于重写原话。术语复核用于发现和核对疑点，不保证零错误；全文取回也不等于逐字人工校对准确。
 
 ## 安装到豆包工作
 
@@ -58,7 +59,7 @@ https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu
 
 ### 方式二：上传 ZIP 技能包
 
-1. 在 [v1.1.0 发布页](https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu/releases/tag/v1.1.0) 下载 `xiaowei-douyin-to-feishu-v1.1.0.zip`。也可以从 [仓库 dist 目录](dist/) 下载同一份包。
+1. 在 [v1.2.0 发布页](https://github.com/siuserxiaowei/xiaowei-douyin-to-feishu/releases/tag/v1.2.0) 下载 `xiaowei-douyin-to-feishu-v1.2.0.zip`。也可以从 [仓库 dist 目录](dist/) 下载同一份包。
 2. 将 ZIP 交给豆包工作，或通过当前版本提供的技能导入入口导入。
 3. 告诉它：
 
@@ -126,8 +127,9 @@ flowchart TD
     C -->|没有或不可用| E[浏览器会话 + yt-dlp 取得配文和音频]
     E --> F[mediakit 或已有 ASR 取得全部字幕]
     F --> G[按时间轴组装并检查缺段]
+    G --> K[专业术语专项复核与证据记录]
     D --> H[分开发布文案与口播逐字稿]
-    G --> H
+    K --> H
     H -->|只测试取稿| I[交付完整文字与状态]
     H -->|要求存飞书| J[创建或更新文档并读回全文]
 ```
@@ -176,7 +178,7 @@ tests/                       # 离线测试
 dist/                        # 可导入 ZIP 与校验和
 ```
 
-脚本负责音频提取、ASR 分段组装、可选本地转写、正文格式化和飞书发布续跑；豆包工作按 Skill 指令调用当前实际可用的内置取稿或云端转写能力。
+脚本负责音频提取、ASR 分段组装、可选本地转写、正文格式化和飞书发布续跑；豆包工作按 Skill 指令调用当前实际可用的内置取稿或云端转写能力，并按术语复核规则检查疑似错词。术语专项复核是 Skill 的语境核对流程，不是独立 ASR 引擎或专用术语识别模型。
 
 ## 参考与署名
 
